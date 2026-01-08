@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
-import { Mic, Send, Bot, StopCircle, Radio, Sparkles, AlertCircle, User } from 'lucide-react';
-import { getFastChatResponse, transcribeAudio } from '../services/geminiService';
+import { Mic, Send, Bot, StopCircle, Radio, Sparkles, AlertCircle, User, AlertTriangle } from 'lucide-react';
+import { transcribeAudio } from '../services/geminiService'; // Keep for pure Gemini audio functions
+import { generateChatResponse } from '../services/aiService';
 import { arrayBufferToBase64, base64ToUint8Array, decodeAudioData, pcmToGeminiBlob } from '../utils';
+import { LLMSettings } from '../types';
 
 interface Message {
   id: string;
@@ -13,12 +15,13 @@ interface Message {
 
 interface AIAssistantProps {
   dataContext: string;
+  settings: LLMSettings;
 }
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const LIVE_MODEL = 'gemini-2.5-flash-native-audio-preview-12-2025';
 
-export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
+export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext, settings }) => {
   const [activeTab, setActiveTab] = useState<'chat' | 'live'>('chat');
   
   // Chat State
@@ -26,7 +29,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
     { 
       id: '1', 
       sender: 'ai', 
-      text: 'Hello! I am your Helpdesk AI Assistant. Ask me anything about your ticket data or current team performance.',
+      text: `Hello! I am your AI Assistant running on ${settings.provider === 'gemini' ? 'Google Gemini' : settings.modelName}. Ask me anything about your ticket data.`,
       timestamp: new Date()
     }
   ]);
@@ -65,6 +68,13 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
     }
   }, [inputText]);
 
+  // Switch tab safely if provider changes and Live is unsupported
+  useEffect(() => {
+    if (settings.provider !== 'gemini' && activeTab === 'live') {
+      setActiveTab('chat');
+    }
+  }, [settings.provider]);
+
   // --- CHAT & TRANSCRIPTION ---
 
   const handleSendMessage = async () => {
@@ -81,7 +91,13 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
     setInputText('');
     setIsTyping(true);
 
-    const responseText = await getFastChatResponse(userMsg.text, dataContext);
+    const systemInstruction = `You are a helpful IT Helpdesk Data Assistant. 
+    You have access to the following current dashboard metrics:
+    ${dataContext}
+    
+    Answer the user's question concisely based on this data.`;
+
+    const responseText = await generateChatResponse(userMsg.text, systemInstruction, settings);
     
     setMessages(prev => [...prev, { 
       id: (Date.now() + 1).toString(), 
@@ -113,6 +129,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
           const base64Audio = (reader.result as string).split(',')[1];
           setIsTyping(true); // Show loading indicator
           try {
+            // We use Gemini for transcription regardless of chat provider because we have the env key
             const transcript = await transcribeAudio(base64Audio);
             setInputText(prev => prev + (prev ? ' ' : '') + transcript);
           } catch (e) {
@@ -139,7 +156,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
     }
   };
 
-  // --- LIVE API ---
+  // --- LIVE API (GEMINI EXCLUSIVE) ---
 
   const startLiveSession = async () => {
     if (isLiveConnected) return;
@@ -155,7 +172,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const source = inputCtx.createMediaStreamSource(stream);
       
-      // Use ScriptProcessor for raw PCM access (deprecated but simplest for single-file demo as per SDK examples)
       const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
       
       const sessionPromise = ai.live.connect({
@@ -172,7 +188,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
                const outputCtx = outputAudioContextRef.current;
                if (!outputCtx) return;
 
-               // Sync nextStartTime
                nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputCtx.currentTime);
 
                const audioBuffer = await decodeAudioData(
@@ -186,13 +201,11 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
                source.connect(outputCtx.destination);
                source.start(nextStartTimeRef.current);
                
-               // Update visualizer (fake volume)
                setVolumeLevel(Math.random() * 100);
                setTimeout(() => setVolumeLevel(0), audioBuffer.duration * 1000);
 
                nextStartTimeRef.current += audioBuffer.duration;
                sourcesRef.current.add(source);
-               
                source.onended = () => sourcesRef.current.delete(source);
             }
           },
@@ -210,12 +223,11 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
           },
-          // Pass the dashboard context as system instruction
           systemInstruction: `You are an intelligent Data Analyst. You are talking to an IT Manager about their Helpdesk performance. 
           Here is the current dashboard data summary: 
           ${dataContext}
           
-          Answer questions about this data concisely. Be professional but conversational.`
+          Answer questions about this data concisely.`
         }
       });
 
@@ -224,12 +236,10 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
       scriptProcessor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
         const pcmBlob = pcmToGeminiBlob(inputData);
-        
         sessionPromise.then(session => {
           session.sendRealtimeInput({ media: pcmBlob });
         });
         
-        // Visualizer input
         let sum = 0;
         for(let i = 0; i < inputData.length; i++) sum += Math.abs(inputData[i]);
         const avg = sum / inputData.length;
@@ -248,24 +258,15 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
   const cleanupLiveSession = () => {
     setLiveStatus('disconnected');
     setIsLiveConnected(false);
-    
-    // Stop audio contexts
     inputAudioContextRef.current?.close();
     outputAudioContextRef.current?.close();
-    
-    // Stop all playing sources
     sourcesRef.current.forEach(s => s.stop());
     sourcesRef.current.clear();
-
-    // Close session if method exists (SDK dependent, usually implied by closing ws)
-    // For now we just reset state as we can't manually close the session object easily without keeping the socket ref
   };
 
   const stopLiveSession = async () => {
-     // Currently no direct .close() on session object in types, but triggering state change
-     // In a real app we would call session.close() if exposed or just reload context
      cleanupLiveSession();
-     window.location.reload(); // Hard reset for audio contexts to ensure clean slate
+     window.location.reload(); 
   };
 
   return (
@@ -283,19 +284,32 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
           <Sparkles className="w-4 h-4 mr-3" /> Chat Assistant
         </button>
         
-        <button
-          onClick={() => setActiveTab('live')}
-          className={`p-3 rounded-lg text-left flex items-center transition-colors ${activeTab === 'live' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium' : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'}`}
-        >
-          <Radio className="w-4 h-4 mr-3" /> Live Conversation
-        </button>
+        <div className="relative group">
+          <button
+            onClick={() => settings.provider === 'gemini' && setActiveTab('live')}
+            disabled={settings.provider !== 'gemini'}
+            className={`w-full p-3 rounded-lg text-left flex items-center transition-colors ${
+              activeTab === 'live' 
+              ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium' 
+              : settings.provider === 'gemini' 
+                  ? 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400' 
+                  : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
+            }`}
+          >
+            <Radio className="w-4 h-4 mr-3" /> Live Conversation
+          </button>
+          {settings.provider !== 'gemini' && (
+            <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block p-2 bg-gray-800 text-white text-xs rounded w-48 z-10">
+               Live mode is currently only available with Gemini provider.
+            </div>
+          )}
+        </div>
 
         <div className="mt-auto p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-xs text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-900/30">
-          <p className="font-semibold mb-1">Models Used:</p>
+          <p className="font-semibold mb-1">Active Configuration:</p>
           <ul className="list-disc ml-4 space-y-1">
-            <li>Gemini 2.5 Flash Lite (Chat)</li>
-            <li>Gemini 3 Flash (Transcription)</li>
-            <li>Gemini 2.5 Live (Audio)</li>
+            <li>Chat: {settings.provider === 'gemini' ? 'Gemini Flash' : settings.modelName}</li>
+            <li>Voice: Gemini (System)</li>
           </ul>
         </div>
       </div>
@@ -367,7 +381,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
                         handleSendMessage();
                       }
                     }}
-                    placeholder="Type a question or hold Mic to speak..."
+                    placeholder={`Ask ${settings.modelName}...`}
                     className="w-full p-3 pr-10 border border-gray-200 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none min-h-[48px] max-h-32 text-sm overflow-y-auto bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
                  />
                </div>
@@ -385,7 +399,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
 
         {activeTab === 'live' && (
           <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gradient-to-br from-indigo-900 to-purple-900 text-white relative overflow-hidden">
-             
              {/* Visualizer Background */}
              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className={`w-64 h-64 bg-indigo-500 rounded-full blur-3xl opacity-20 transition-all duration-100`} style={{ transform: `scale(${1 + volumeLevel/50})` }}></div>
@@ -395,7 +408,7 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
              <div className="z-10 text-center space-y-8">
                <div>
                   <h2 className="text-3xl font-bold mb-2">Live Data Analyst</h2>
-                  <p className="text-indigo-200">Have a real-time voice conversation with your data.</p>
+                  <p className="text-indigo-200">Real-time voice conversation powered by Gemini.</p>
                </div>
 
                <div className="h-32 flex items-center justify-center">
@@ -434,10 +447,6 @@ export const AIAssistant: React.FC<AIAssistantProps> = ({ dataContext }) => {
                  >
                    <Mic className="w-6 h-6" /> {liveStatus === 'connecting' ? 'Connecting...' : 'Start Conversation'}
                  </button>
-               )}
-               
-               {liveStatus === 'connected' && (
-                 <p className="text-sm text-indigo-300 animate-pulse">Listening...</p>
                )}
              </div>
           </div>

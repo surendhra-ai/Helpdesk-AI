@@ -60,7 +60,17 @@ export enum AppView {
   AGENTS = 'AGENTS',
   AI_INSIGHTS = 'AI_INSIGHTS',
   AI_ASSISTANT = 'AI_ASSISTANT',
-  DATA_UPLOAD = 'DATA_UPLOAD'
+  DATA_UPLOAD = 'DATA_UPLOAD',
+  SETTINGS = 'SETTINGS'
 }
 
 export type TimeRange = 'all' | 'last-7-days' | 'last-30-days' | 'this-month' | 'last-month';
+
+export type LLMProvider = 'gemini' | 'openai' | 'custom';
+
+export interface LLMSettings {
+  provider: LLMProvider;
+  apiKey: string; // For OpenAI/Custom. Gemini uses env.
+  modelName: string;
+  baseURL?: string; // For Custom/Local LLMs
+}

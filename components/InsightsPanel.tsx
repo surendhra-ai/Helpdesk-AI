@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, ArrowRight, UserCheck, TrendingDown, Users, Layers, RefreshCw } from 'lucide-react';
-import { Ticket, AgentMetrics, AIRecommendation } from '../types';
-import { getAIInsights } from '../services/geminiService';
+import { Ticket, AgentMetrics, AIRecommendation, LLMSettings } from '../types';
+import { generateInsights } from '../services/aiService';
 
 interface InsightsPanelProps {
   tickets: Ticket[];
   agents: AgentMetrics[];
   timeRangeLabel: string;
+  settings: LLMSettings;
 }
 
 const CACHE_KEY = 'helpdesk_insights_cache';
 
-export const InsightsPanel: React.FC<InsightsPanelProps> = ({ tickets, agents, timeRangeLabel }) => {
+export const InsightsPanel: React.FC<InsightsPanelProps> = ({ tickets, agents, timeRangeLabel, settings }) => {
   const [loading, setLoading] = useState(false);
   const [insight, setInsight] = useState<AIRecommendation | null>(null);
 
@@ -32,14 +33,10 @@ export const InsightsPanel: React.FC<InsightsPanelProps> = ({ tickets, agents, t
     setInsight(null);
   }, [timeRangeLabel]);
 
-  // We do NOT automatically clear insights when tickets change slightly to avoid flickering,
-  // but the user can manually regenerate.
-  // Major data changes (uploads) clear the cache in App.tsx.
-
   const handleGenerate = async () => {
     setLoading(true);
     try {
-      const result = await getAIInsights(tickets, agents, timeRangeLabel);
+      const result = await generateInsights(tickets, agents, timeRangeLabel, settings);
       setInsight(result);
       
       // Save to cache
@@ -53,7 +50,8 @@ export const InsightsPanel: React.FC<InsightsPanelProps> = ({ tickets, agents, t
       }
 
     } catch (e) {
-      alert("Failed to generate insights. Ensure API Key is valid.");
+      alert("Failed to generate insights. Check your connection or API key.");
+      console.error(e);
     } finally {
       setLoading(false);
     }
@@ -72,8 +70,8 @@ export const InsightsPanel: React.FC<InsightsPanelProps> = ({ tickets, agents, t
             AI Intelligence Hub
           </h2>
           <p className="text-indigo-200 max-w-lg">
-            Generating insights for: <span className="font-semibold text-white">{timeRangeLabel}</span>.
-            Get resource recommendations, performance analysis, and strategies to reduce tickets.
+            Generating insights using <span className="font-semibold text-white">{settings.provider === 'gemini' ? 'Gemini' : settings.modelName}</span>.
+            Get resource recommendations, performance analysis, and strategies.
           </p>
         </div>
         

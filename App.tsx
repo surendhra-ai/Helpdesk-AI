@@ -3,7 +3,7 @@ import {
   LayoutDashboard, 
   Users, 
   BrainCircuit, 
-  Settings, 
+  Settings as SettingsIcon, 
   Menu,
   FileText,
   Upload,
@@ -13,13 +13,14 @@ import {
   Sun,
   Moon
 } from 'lucide-react';
-import { Ticket, AgentMetrics, AppView, RawTicket, TimeRange } from './types';
+import { Ticket, AgentMetrics, AppView, RawTicket, TimeRange, LLMSettings } from './types';
 import { calculateAgentMetrics, generateMockData, filterTickets, getPreviousPeriodTickets } from './utils';
 import { Dashboard } from './components/Dashboard';
 import { InsightsPanel } from './components/InsightsPanel';
 import { DataUpload } from './components/DataUpload';
 import { AgentTableSkeleton } from './components/Skeletons';
 import { AIAssistant } from './components/AIAssistant';
+import { Settings } from './components/Settings';
 
 export default function App() {
   const [view, setView] = useState<AppView>(AppView.DASHBOARD);
@@ -33,6 +34,17 @@ export default function App() {
         return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
     return 'light';
+  });
+
+  // LLM Settings State
+  const [llmSettings, setLlmSettings] = useState<LLMSettings>(() => {
+    const saved = localStorage.getItem('helpdesk_llm_settings');
+    return saved ? JSON.parse(saved) : {
+      provider: 'gemini',
+      apiKey: '',
+      modelName: 'gemini-3-flash-preview',
+      baseURL: ''
+    };
   });
   
   // Initialize Tickets from LocalStorage or Mock
@@ -49,6 +61,13 @@ export default function App() {
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  };
+
+  const handleSaveSettings = (newSettings: LLMSettings) => {
+    setLlmSettings(newSettings);
+    localStorage.setItem('helpdesk_llm_settings', JSON.stringify(newSettings));
+    alert("Settings saved successfully!");
+    setView(AppView.DASHBOARD);
   };
 
   useEffect(() => {
@@ -163,6 +182,7 @@ export default function App() {
     { id: AppView.AI_INSIGHTS, label: 'AI Insights', icon: <BrainCircuit size={20} /> },
     { id: AppView.AI_ASSISTANT, label: 'AI Assistant', icon: <Bot size={20} /> },
     { id: AppView.DATA_UPLOAD, label: 'Upload Data', icon: <Upload size={20} /> },
+    { id: AppView.SETTINGS, label: 'Settings', icon: <SettingsIcon size={20} /> },
   ];
 
   const getTimeRangeLabel = (range: TimeRange) => {
@@ -243,28 +263,28 @@ export default function App() {
             
             <div className="flex items-center gap-6">
                 {/* Time Range Selector */}
-                 <div className="flex items-center gap-2">
-                    <Calendar size={16} className="text-gray-500 dark:text-gray-400" />
-                    <select 
-                      value={timeRange}
-                      onChange={handleTimeRangeChange}
-                      className="bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2"
-                    >
-                      <option value="last-7-days">Last 7 Days</option>
-                      <option value="last-30-days">Last 30 Days</option>
-                      <option value="this-month">This Month</option>
-                      <option value="last-month">Last Month</option>
-                      <option value="all">All Time</option>
-                    </select>
-                 </div>
+                 {view !== AppView.SETTINGS && (
+                   <div className="flex items-center gap-2">
+                      <Calendar size={16} className="text-gray-500 dark:text-gray-400" />
+                      <select 
+                        value={timeRange}
+                        onChange={handleTimeRangeChange}
+                        className="bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block p-2"
+                      >
+                        <option value="last-7-days">Last 7 Days</option>
+                        <option value="last-30-days">Last 30 Days</option>
+                        <option value="this-month">This Month</option>
+                        <option value="last-month">Last Month</option>
+                        <option value="all">All Time</option>
+                      </select>
+                   </div>
+                 )}
 
                  <div className="h-6 w-px bg-gray-200 dark:bg-gray-700"></div>
 
                  <div className="flex items-center gap-4">
                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        DB Status: <span className="font-medium text-green-600 dark:text-green-400">
-                          {localStorage.getItem('helpdesk_db_tickets') ? 'Saved Locally' : 'Demo Mode'}
-                        </span>
+                        Provider: <span className="font-medium text-indigo-600 dark:text-indigo-400 uppercase">{llmSettings.provider}</span>
                      </div>
                      <div className="h-8 w-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs">
                         AD
@@ -341,15 +361,23 @@ export default function App() {
               tickets={filteredTickets} 
               agents={filteredAgents} 
               timeRangeLabel={getTimeRangeLabel(timeRange)}
+              settings={llmSettings}
             />
           )}
 
           {view === AppView.AI_ASSISTANT && (
-            <AIAssistant dataContext={aiDataContext} />
+            <AIAssistant 
+              dataContext={aiDataContext} 
+              settings={llmSettings}
+            />
           )}
 
           {view === AppView.DATA_UPLOAD && (
             <DataUpload onDataLoaded={handleDataLoaded} />
+          )}
+
+          {view === AppView.SETTINGS && (
+            <Settings currentSettings={llmSettings} onSave={handleSaveSettings} />
           )}
         </div>
       </main>
