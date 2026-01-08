@@ -1,0 +1,7 @@
+{
+  "name": "HelpdeskAI",
+  "description": "Intelligent Helpdesk Analytics Dashboard using Gemini to analyze ticket data, track KPIs, and provide actionable recommendations for team performance and resource allocation.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
